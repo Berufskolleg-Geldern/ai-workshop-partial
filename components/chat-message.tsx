@@ -23,9 +23,103 @@ function escapeHtml(value: string) {
 function renderMarkdown(value: string) {
   let html = escapeHtml(value)
 
+  const codeBlocks: string[] = []
   html = html.replace(/```([\s\S]*?)```/g, (_, code) => {
-    return `<pre class="rounded-xl bg-slate-800 p-3 text-xs overflow-x-auto"><code>${escapeHtml(code)}</code></pre>`
+    const block = `<pre class="rounded-xl bg-slate-800 p-3 text-xs overflow-x-auto"><code>${escapeHtml(code)}</code></pre>`
+    codeBlocks.push(block)
+    return `@@CODEBLOCK${codeBlocks.length - 1}@@`
   })
+
+  function parseTableBlocks(text: string) {
+    const lines = text.split("\n")
+    const result: string[] = []
+
+    const isTableSeparator = (line: string) => {
+      return /^\s*\|?\s*[:\-\s]+(?:\|\s*[:\-\s]+)*\|?\s*$/.test(line)
+    }
+
+    const parseRow = (row?: string) => {
+      if (!row) {
+        return []
+      }
+      return row
+        .trim()
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((cell) => cell.trim())
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const current = lines[i]
+      const next = lines[i + 1]
+
+      if (current?.includes("|") && next && isTableSeparator(next)) {
+        const tableRows = [current]
+        let j = i + 2
+        while (j < lines.length && lines[j]?.includes("|")) {
+          tableRows.push(lines[j])
+          j++
+        }
+
+        const headerCells = parseRow(tableRows[0])
+        const alignCells = parseRow(tableRows[1])
+        const bodyRows = tableRows.slice(2).filter(Boolean).map(parseRow)
+
+        const headerHtml = headerCells
+          .map((cell, index) => {
+            const align = alignCells[index]
+            const alignAttr = /:-+:/.test(align)
+              ? "center"
+              : /:-+/.test(align)
+              ? "left"
+              : /-+:/.test(align)
+              ? "right"
+              : "left"
+            return `<th class="border px-3 py-2 text-left" style="text-align:${alignAttr}">${cell}</th>`
+          })
+          .join("")
+
+        const bodyHtml = bodyRows
+          .map((row) => {
+            const cells = row
+              .map((cell, index) => {
+                const align = alignCells[index]
+                const alignAttr = /:-+:/.test(align)
+                  ? "center"
+                  : /:-+/.test(align)
+                  ? "left"
+                  : /-+:/.test(align)
+                  ? "right"
+                  : "left"
+                return `<td class="border px-3 py-2" style="text-align:${alignAttr}">${cell}</td>`
+              })
+              .join("")
+            return `<tr>${cells}</tr>`
+          })
+          .join("")
+
+        result.push(`
+<table class="w-full border-collapse my-4 text-sm">
+  <thead>
+    <tr>${headerHtml}</tr>
+  </thead>
+  <tbody>${bodyHtml}</tbody>
+</table>
+        `.trim())
+
+        i = j - 1
+        continue
+      }
+
+      result.push(current)
+    }
+
+    return result.join("\n")
+  }
+
+  html = parseTableBlocks(html)
+  html = html.replace(/^\s*(?:[-*_]){3,}\s*$/gm, '<hr class="border-border my-4" />')
 
   html = html.replace(/`([^`]+)`/g, (_, code) => {
     return `<code class="rounded px-1 bg-muted/80 text-muted-foreground">${escapeHtml(code)}</code>`
@@ -42,9 +136,22 @@ function renderMarkdown(value: string) {
   html = html.replace(/(<li>[\s\S]+?<\/li>)(?!(?:[\s\S]*?<li>))/g, (list) => {
     return `<ul>${list}</ul>`
   })
-  html = html.replace(/\n{2,}/g, "</p><p>")
-  html = `<p>${html}</p>`
-  html = html.replace(/<p>\s*<\/p>/g, "")
+
+  const blocks = html.split(/\n{2,}/g)
+  html = blocks
+    .map((block) => {
+      const trimmed = block.trim()
+      if (!trimmed) {
+        return ""
+      }
+      if (/^<(h[1-6]|ul|ol|pre|table|blockquote|hr|div|section|aside|header|footer)/.test(trimmed)) {
+        return trimmed
+      }
+      return `<p>${trimmed}</p>`
+    })
+    .join("")
+
+  html = html.replace(/@@CODEBLOCK(\d+)@@/g, (_, index) => codeBlocks[Number(index)])
   html = html.replace(/\n/g, "<br />")
   return html
 }
