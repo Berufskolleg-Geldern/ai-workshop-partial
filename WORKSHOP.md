@@ -73,6 +73,35 @@ useEffect(() => {
 - Ersetze in `sendMessage()` den Demo-Branch durch echten Netzwerkcode.
 - Das ist die zentrale Änderung vom Full-Modus.
 
+#### Aktueller Demo-Abschnitt, der ersetzt werden muss
+Suche diesen Block in `sendMessage()`:
+
+```ts
+const responseText = getMockResponse(trimmed);
+const chunks = splitResponseChunks(responseText);
+let renderedText = "";
+
+chunks.forEach((chunk, index) => {
+  const timeout = setTimeout(() => {
+    renderedText = renderedText ? `${renderedText} ${chunk}` : chunk;
+    updateAssistant({
+      content: renderedText,
+      thinking: index < chunks.length - 1 ? "Die KI schreibt..." : "",
+    });
+
+    if (index === chunks.length - 1) {
+      activeAssistantIdRef.current = null;
+      setIsTyping(false);
+    }
+  }, 300 + index * 220);
+
+  typingTimeoutsRef.current.push(timeout);
+});
+```
+
+- Diese gesamte Logik wird im Full-Modus durch einen echten `fetch`-Aufruf ersetzt.
+- Entferne außerdem die lokalen Timer/`typingTimeoutsRef`-abhängigen Schritte in `sendMessage()`.
+
 #### Full-Modus-Code für Anfrage
 ```ts
 abortControllerRef.current?.abort();
@@ -99,14 +128,61 @@ if (!response.ok) {
 }
 ```
 
+#### Was genau ersetzt wird
+1. Entferne die Zeilen:
+   - `const responseText = getMockResponse(trimmed);`
+   - `const chunks = splitResponseChunks(responseText);`
+   - den gesamten `chunks.forEach(...)`-Block
+2. Füge stattdessen die `AbortController`-Initialisierung ein.
+3. Füge den `await fetch(...)`-Block ein.
+
 - Wichtig: Die Abbruch-Logik (`AbortController`) ist Teil des echten Full-Modus.
 
 ### Schritt 4: Streaming-Antwort lesen
-- Im Full-Modus liest die App die Antwort zeilenweise aus dem Stream.
-- `response.body.getReader()` und `TextDecoder` werden verwendet.
+- Im Full-Modus kommt die Antwort nicht als fertiger Text, sondern als Datenstrom.
+- Die App muss den Stream lesen, den Inhalt zusammensetzen und den Assistenten schrittweise aktualisieren.
 
-#### Full-Modus-Code für Streaming und Parsing
+#### Was im Code passieren muss
+1. `response.body.getReader()` aufrufen.
+2. Mit `TextDecoder` den Datenstrom in Text umwandeln.
+3. Den Text in Zeilen aufteilen und nur vollständige JSON-Events verarbeiten.
+4. Für jede Zeile das Event parsen und entsprechend `thinking` oder `response` aktualisieren.
+5. Am Ende den letzten Puffer verarbeiten und bei leerer Antwort eine Fallback-Nachricht setzen.
+
+#### Genauer Austausch: Hier muss ersetzt werden
+- Suche in `sendMessage()` nach dem Demo-Block:
+
 ```ts
+const responseText = getMockResponse(trimmed);
+const chunks = splitResponseChunks(responseText);
+let renderedText = "";
+
+chunks.forEach((chunk, index) => {
+  const timeout = setTimeout(() => {
+    renderedText = renderedText ? `${renderedText} ${chunk}` : chunk;
+    updateAssistant({
+      content: renderedText,
+      thinking: index < chunks.length - 1 ? "Die KI schreibt..." : "",
+    });
+
+    if (index === chunks.length - 1) {
+      activeAssistantIdRef.current = null;
+      setIsTyping(false);
+    }
+  }, 300 + index * 220);
+
+  typingTimeoutsRef.current.push(timeout);
+});
+```
+
+- Ersetze diesen gesamten Block durch den folgenden Full-Modus-Code:
+
+```ts
+if (!response.body) {
+  updateAssistant({ content: "Fehler: Keine Antwort vom Server." });
+  return;
+}
+
 const reader = response.body.getReader();
 const decoder = new TextDecoder();
 let buffer = "";
@@ -139,7 +215,7 @@ while (true) {
         updateAssistant({ content: responseText });
       }
     } catch {
-      // ignore malformed lines
+      // ignoriere unvollständige oder fehlerhafte Zeilen
     }
   }
 }
@@ -168,7 +244,19 @@ if (!responseText) {
 }
 ```
 
-- Dieser Abschnitt ist der Kern des Full-Modus: echte Antworten aus dem Modell statt lokaler Text-Simulation.
+#### Hier genau endet der Austausch
+- Entferne den Demo-Block inklusive `setTimeout(...)` und `typingTimeoutsRef.current.push(timeout)`.
+- Belasse das Update der Nachrichtenzustände (`updateAssistant(...)`) unverändert, aber auf echten `responseText`-Stream umgestellt.
+
+#### Warum das so funktioniert
+- `buffer` sammelt eingehende Daten und sorgt dafür, dass nur ganze Zeilen geparst werden.
+- `lines.pop()` lässt die letzte unvollständige Zeile für den nächsten Lesezyklus im Puffer zurück.
+- `mergeText()` sorgt dafür, dass neue Textteile korrekt an vorhandene Antworten angehängt werden.
+- `thinking` kann parallel zum eigentlichen Text in den Fortschritt eingeblendet werden.
+
+#### Optionaler Vergleich mit Demo-Code
+- Im Demo-Modus wird hier stattdessen `chunks.forEach(...)` verwendet.
+- Der Full-Modus braucht keinen lokalen Timer mehr, sondern verarbeitet echte Streaming-Ereignisse.
 
 ### Schritt 5: Abbruch und Fehlerbehandlung
 - Stelle sicher, dass `handleStop()` die echte Abort-Logik verwendet.
