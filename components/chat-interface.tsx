@@ -371,25 +371,9 @@ export function ChatInterface() {
           <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-4">
             {isEmpty && (
               <div className="flex flex-col items-center justify-center py-16 gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center">
-                  <svg
-                    width="28"
-                    height="28"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="text-primary-foreground"
-                  >
-                    <path d="M12 8V4H8" />
-                    <rect width="16" height="12" x="4" y="8" rx="2" />
-                    <path d="M2 14h2" />
-                    <path d="M20 14h2" />
-                    <path d="M15 13v2" />
-                    <path d="M9 13v2" />
-                  </svg>
+                <div className="w-14 h-14 rounded-2xl bg-[#efefef] flex items-center justify-center">
+                              <img src="https://www.berufskolleg-geldern.de/fileadmin/daten/bk_geldern/berufskolleg-geldern-logo.svg" style={{ width: "100%", height: "80%",  }} />
+
                 </div>
                 <div className="text-center">
                   <h2 className="text-lg font-semibold text-foreground">

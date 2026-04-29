@@ -64,18 +64,19 @@ export function ChatMessage({ message }: ChatMessageProps) {
         isUser ? "justify-end" : "justify-start"
       )}
     >
+      
       <div
         id={`msg-${message.id}`}
         className={cn(
           "max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed",
           isUser
             ? "bg-primary text-primary-foreground rounded-br-sm"
-            : "bg-muted text-foreground rounded-bl-sm"
+            : "text-foreground rounded-bl-sm"
         )}
       >
   
         {message.thinking ? (
-          <div className="mt-3 rounded-2xl border border-border bg-muted/70 px-3 py-2 text-sm italic text-muted-foreground">
+          <div className="mb-3  rounded-2xl border border-border px-3 py-2 text-sm italic text-muted-foreground">
             <button
               type="button"
               onClick={() => setIsOpen((current) => !current)}
@@ -96,6 +97,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
             )}
           </div>
         ) : null}
+
 
         <div
           className="markdown prose max-w-none whitespace-pre-wrap"
