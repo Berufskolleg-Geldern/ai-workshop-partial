@@ -1,0 +1,150 @@
+diff --git a/components/chat-interface.tsx b/components/chat-interface.tsx
+index 8b4a197..a4538e4 100644
+--- a/components/chat-interface.tsx
++++ b/components/chat-interface.tsx
+@@ -136,6 +136,11 @@ export function ChatInterface() {
+       const trimmed = text.trim();
+       if (!trimmed || isTyping) return;
+ 
++      abortControllerRef.current?.abort();
++      clearTypingTimeouts();
++      const controller = new AbortController();
++      abortControllerRef.current = controller;
++
+       const userId = Date.now().toString();
+       const assistantId = `assistant-${userId}`;
+       activeAssistantIdRef.current = assistantId;
+@@ -174,27 +179,91 @@ export function ChatInterface() {
+         return previous + next;
+       };
+ 
+-      clearTypingTimeouts();
+-      const responseText = getMockResponse(trimmed);
+-      const chunks = splitResponseChunks(responseText);
+-      let renderedText = "";
+-
+-      chunks.forEach((chunk, index) => {
+-        const timeout = setTimeout(() => {
+-          renderedText = renderedText ? `${renderedText} ${chunk}` : chunk;
+-          updateAssistant({
+-            content: renderedText,
+-            thinking: index < chunks.length - 1 ? "Die KI schreibt..." : "",
+-          });
+-
+-          if (index === chunks.length - 1) {
+-            activeAssistantIdRef.current = null;
+-            setIsTyping(false);
++      const response = await fetch("/api/ollama", {
++        method: "POST",
++        headers: {
++          "Content-Type": "application/json",
++        },
++        body: JSON.stringify({ message: trimmed, model: selectedModel }),
++        signal: controller.signal,
++      });
++
++      if (!response.ok) {
++        const errorData = await response.json().catch(() => null);
++        const errorText =
++          errorData?.error ||
++          `Fehler beim Abrufen der Antwort: ${response.status} ${response.statusText}`;
++
++        updateAssistant({ content: `Fehler: ${errorText}` });
++        return;
++      }
++
++      if (!response.body) {
++        updateAssistant({ content: "Fehler: Keine Antwort vom Server." });
++        return;
++      }
++
++      const reader = response.body.getReader();
++      const decoder = new TextDecoder();
++      let buffer = "";
++      let thinkingText = "";
++      let responseText = "";
++
++      while (true) {
++        const { done, value } = await reader.read();
++        if (done) break;
++
++        buffer += decoder.decode(value, { stream: true });
++        const lines = buffer.split(/\r?\n/);
++        buffer = lines.pop() ?? "";
++
++        for (const line of lines) {
++          if (!line.trim()) continue;
++          try {
++            const event = JSON.parse(line) as {
++              type: "thinking" | "response";
++              text: string;
++            };
++
++            if (event.type === "thinking") {
++              thinkingText = mergeText(thinkingText, event.text);
++              updateAssistant({ thinking: thinkingText });
++            }
++
++            if (event.type === "response") {
++              responseText = mergeText(responseText, event.text);
++              updateAssistant({ content: responseText });
++            }
++          } catch {
++            // ignoriere unvollständige oder fehlerhafte Zeilen
+           }
+-        }, 300 + index * 220);
++        }
++      }
+ 
+-        typingTimeoutsRef.current.push(timeout);
+-      });
++      if (buffer.trim()) {
++        try {
++          const event = JSON.parse(buffer) as {
++            type: "thinking" | "response";
++            text: string;
++          };
++          if (event.type === "thinking") {
++            thinkingText = mergeText(thinkingText, event.text);
++            updateAssistant({ thinking: thinkingText });
++          }
++          if (event.type === "response") {
++            responseText = mergeText(responseText, event.text);
++            updateAssistant({ content: responseText });
++          }
++        } catch {
++          // ignore malformed final buffer
++        }
++      }
++
++      if (!responseText) {
++        updateAssistant({ content: "Leere Antwort von Ollama." });
++      }
++
++      setIsTyping(false);
+     },
+     [isTyping],
+   );
+@@ -213,10 +282,10 @@ export function ChatInterface() {
+       block: "center",
+     });
+   };
+-
+   const handleStop = () => {
+     const assistantId = activeAssistantIdRef.current;
+-    clearTypingTimeouts();
++    abortControllerRef.current?.abort();
++    abortControllerRef.current = null;
+     activeAssistantIdRef.current = null;
+     setIsTyping(false);
+ 
+@@ -237,8 +306,7 @@ export function ChatInterface() {
+ 
+   const isEmpty = messages.length === 1 && messages[0].id === "welcome";
+ 
+-
+-useEffect(() => {
++  useEffect(() => {
+     const controller = new AbortController();
+ 
+     fetch("/api/ollama", {
