@@ -242,11 +242,9 @@ if (buffer.trim()) {
 if (!responseText) {
   updateAssistant({ content: "Leere Antwort von Ollama." });
 }
-```
 
-#### Hier genau endet der Austausch
-- Entferne den Demo-Block inklusive `setTimeout(...)` und `typingTimeoutsRef.current.push(timeout)`.
-- Belasse das Update der Nachrichtenzustände (`updateAssistant(...)`) unverändert, aber auf echten `responseText`-Stream umgestellt.
+setIsTyping(false);
+
 
 #### Warum das so funktioniert
 - `buffer` sammelt eingehende Daten und sorgt dafür, dass nur ganze Zeilen geparst werden.
