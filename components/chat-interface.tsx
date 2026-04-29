@@ -32,6 +32,69 @@ const SUGGESTIONS = [
   "Was kannst du alles?",
 ];
 
+const getMockResponse = (message: string) => {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("ki") ||
+    normalized.includes("ai") ||
+    normalized.includes("künstlich") ||
+    normalized.includes("modell")
+  ) {
+    return MOCK_RESPONSES[0];
+  }
+
+  if (
+    normalized.includes("lernen") ||
+    normalized.includes("schule") ||
+    normalized.includes("programm") ||
+    normalized.includes("code")
+  ) {
+    return MOCK_RESPONSES[1];
+  }
+
+  if (
+    normalized.includes("problem") ||
+    normalized.includes("hilfe") ||
+    normalized.includes("herausforderung")
+  ) {
+    return MOCK_RESPONSES[2];
+  }
+
+  if (
+    normalized.includes("erkläre") ||
+    normalized.includes("anleitung") ||
+    normalized.includes("wie")
+  ) {
+    return MOCK_RESPONSES[3];
+  }
+
+  if (
+    normalized.includes("falsch") ||
+    normalized.includes("missverständnis") ||
+    normalized.includes("fehler")
+  ) {
+    return MOCK_RESPONSES[4];
+  }
+
+  if (
+    normalized.includes("interessant") ||
+    normalized.includes("perspektive") ||
+    normalized.includes("meinung")
+  ) {
+    return MOCK_RESPONSES[5];
+  }
+
+  const randomResponse =
+    MOCK_RESPONSES[Math.floor(Math.random() * MOCK_RESPONSES.length)];
+  return randomResponse;
+};
+
+const splitResponseChunks = (text: string) => {
+  const chunks = text.match(/.{1,60}(?:\s|$)/g) || [text];
+  return chunks.map((chunk) => chunk.trim()).filter(Boolean);
+};
+
 export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
@@ -45,63 +108,33 @@ export function ChatInterface() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
+  const typingTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const userMessages = messages.filter((msg) => msg.role === "user");
+
+  const addModel = (model: string) => {
+    setAvailableModels((prev) => {
+      if (!prev.includes(model)) {
+        return [...prev, model];
+      }
+      return prev;
+    });
+  };
+
+  const clearTypingTimeouts = () => {
+    typingTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+    typingTimeoutsRef.current = [];
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-
-    fetch("/api/ollama", {
-      method: "GET",
-      signal: controller.signal,
-      cache: "no-store",
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          const errorJson = await response.json().catch(() => null);
-          throw new Error(
-            errorJson?.error ||
-              `Fehler beim Abrufen der Modelle: ${response.statusText}`,
-          );
-        }
-
-        const data = await response.json().catch(() => null);
-        const models = Array.isArray(data?.models) ? data.models : [];
-
-        if (models.length > 0) {
-          setAvailableModels(models);
-          if (!models.includes(selectedModel)) {
-            setSelectedModel(models[0]);
-          }
-        }
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) {
-          setModelsError(
-            error instanceof Error
-              ? error.message
-              : "Modelle konnten nicht geladen werden.",
-          );
-        }
-      });
-
-    return () => controller.abort();
-  }, []);
-
   const sendMessage = useCallback(
-    async (text: string) => {
+    (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isTyping) return;
-
-      abortControllerRef.current?.abort();
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
 
       const userId = Date.now().toString();
       const assistantId = `assistant-${userId}`;
@@ -118,7 +151,7 @@ export function ChatInterface() {
         id: assistantId,
         role: "assistant",
         content: "",
-        thinking: "",
+        thinking: "Die KI überlegt...",
         timestamp: new Date(),
       };
 
@@ -134,124 +167,27 @@ export function ChatInterface() {
         );
       };
 
-      const mergeText = (previous: string, next: string) => {
-        if (!next) return previous;
-        if (next.startsWith(previous)) return next;
-        if (previous.endsWith(next)) return previous;
-        return previous + next;
-      };
+      clearTypingTimeouts();
+      const responseText = getMockResponse(trimmed);
+      const chunks = splitResponseChunks(responseText);
+      let renderedText = "";
 
-      try {
-        const response = await fetch("/api/ollama", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ message: trimmed, model: selectedModel }),
-          signal: controller.signal,
-        });
+      chunks.forEach((chunk, index) => {
+        const timeout = setTimeout(() => {
+          renderedText = renderedText ? `${renderedText} ${chunk}` : chunk;
+          updateAssistant({
+            content: renderedText,
+            thinking: index < chunks.length - 1 ? "Die KI schreibt..." : "",
+          });
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => null);
-          const errorText =
-            errorData?.error ||
-            `Fehler beim Abrufen der Antwort: ${response.status} ${response.statusText}`;
-
-          updateAssistant({ content: `Fehler: ${errorText}` });
-          return;
-        }
-
-        if (!response.body) {
-          const json = await response.json().catch(() => null);
-          const content = json?.text || "Keine Antwort erhalten.";
-          updateAssistant({ content });
-          return;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let thinkingText = "";
-        let responseText = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split(/\r?\n/);
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const event = JSON.parse(line) as {
-                type: "thinking" | "response";
-                text: string;
-              };
-
-              if (event.type === "thinking") {
-                thinkingText = mergeText(thinkingText, event.text);
-                updateAssistant({ thinking: thinkingText });
-              }
-
-              if (event.type === "response") {
-                responseText = mergeText(responseText, event.text);
-                updateAssistant({ content: responseText });
-              }
-            } catch {
-              // ignore malformed lines
-            }
+          if (index === chunks.length - 1) {
+            activeAssistantIdRef.current = null;
+            setIsTyping(false);
           }
-        }
+        }, 300 + index * 220);
 
-        if (buffer.trim()) {
-          try {
-            const event = JSON.parse(buffer) as {
-              type: "thinking" | "response";
-              text: string;
-            };
-            if (event.type === "thinking") {
-              thinkingText = mergeText(thinkingText, event.text);
-              updateAssistant({ thinking: thinkingText });
-            }
-            if (event.type === "response") {
-              responseText = mergeText(responseText, event.text);
-              updateAssistant({ content: responseText });
-            }
-          } catch {
-            // ignore malformed final buffer
-          }
-        }
-
-        if (!responseText) {
-          updateAssistant({ content: "Leere Antwort von Ollama." });
-        }
-      } catch (error) {
-        const isAbortError =
-          error instanceof DOMException && error.name === "AbortError";
-
-        if (!isAbortError) {
-          const errorMessage =
-            error instanceof Error
-              ? error.message
-              : "Unbekannter Fehler beim Senden der Anfrage.";
-
-          updateAssistant({ content: `Verbindungsfehler: ${errorMessage}` });
-        } else {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId && !msg.content
-                ? { ...msg, content: "Abgebrochen." }
-                : msg,
-            ),
-          );
-        }
-      } finally {
-        abortControllerRef.current = null;
-        activeAssistantIdRef.current = null;
-        setIsTyping(false);
-      }
+        typingTimeoutsRef.current.push(timeout);
+      });
     },
     [isTyping],
   );
@@ -273,8 +209,7 @@ export function ChatInterface() {
 
   const handleStop = () => {
     const assistantId = activeAssistantIdRef.current;
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+    clearTypingTimeouts();
     activeAssistantIdRef.current = null;
     setIsTyping(false);
 
@@ -372,8 +307,10 @@ export function ChatInterface() {
             {isEmpty && (
               <div className="flex flex-col items-center justify-center py-16 gap-4">
                 <div className="w-14 h-14 rounded-2xl bg-[#efefef] flex items-center justify-center">
-                              <img src="https://www.berufskolleg-geldern.de/fileadmin/daten/bk_geldern/berufskolleg-geldern-logo.svg" style={{ width: "100%", height: "80%",  }} />
-
+                  <img
+                    src="https://www.berufskolleg-geldern.de/fileadmin/daten/bk_geldern/berufskolleg-geldern-logo.svg"
+                    style={{ width: "100%", height: "80%" }}
+                  />
                 </div>
                 <div className="text-center">
                   <h2 className="text-lg font-semibold text-foreground">
