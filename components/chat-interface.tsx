@@ -110,7 +110,7 @@ export function ChatInterface() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
   const typingTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-
+  const abortControllerRef = useRef<AbortController | null>(null);
   const userMessages = messages.filter((msg) => msg.role === "user");
 
   const addModel = (model: string) => {
@@ -132,7 +132,7 @@ export function ChatInterface() {
   }, [messages, isTyping]);
 
   const sendMessage = useCallback(
-    (text: string) => {
+    async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isTyping) return;
 
@@ -165,6 +165,13 @@ export function ChatInterface() {
             msg.id === assistantId ? { ...msg, ...update } : msg,
           ),
         );
+      };
+
+      const mergeText = (previous: string, next: string) => {
+        if (!next) return previous;
+        if (next.startsWith(previous)) return next;
+        if (previous.endsWith(next)) return previous;
+        return previous + next;
       };
 
       clearTypingTimeouts();
@@ -229,6 +236,47 @@ export function ChatInterface() {
   };
 
   const isEmpty = messages.length === 1 && messages[0].id === "welcome";
+
+
+useEffect(() => {
+    const controller = new AbortController();
+
+    fetch("/api/ollama", {
+      method: "GET",
+      signal: controller.signal,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errorJson = await response.json().catch(() => null);
+          throw new Error(
+            errorJson?.error ||
+              `Fehler beim Abrufen der Modelle: ${response.statusText}`,
+          );
+        }
+
+        const data = await response.json().catch(() => null);
+        const models = Array.isArray(data?.models) ? data.models : [];
+
+        if (models.length > 0) {
+          setAvailableModels(models);
+          if (!models.includes(selectedModel)) {
+            setSelectedModel(models[0]);
+          }
+        }
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setModelsError(
+            error instanceof Error
+              ? error.message
+              : "Modelle konnten nicht geladen werden.",
+          );
+        }
+      });
+
+    return () => controller.abort();
+  }, []);
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
